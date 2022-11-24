@@ -1,20 +1,35 @@
 ## Scalable Approximate MCMC algorithms for the Horseshoe Prior, Johndrow et al. (2020)
+rm(list=ls())
+install.packages("mvtnorm")
+install.packages("dplyr")
+install.packages("truncnorm")
+
 library(mvtnorm)
 library(dplyr)
+library(truncnorm)
 
 # setting: z = W\beta + e
 
 ########### ########### ###########
-N <- 10^3
-p <- 10^4
+N <- 1000
+p <- 2000
+true_sigma2 <- 4
+omega <- 0.002 # noninformative?
 
 ########### data ###########
 # true beta
 beta_gen_ftn <- function(p_input){
-  non_null_index <- c(1:23)
-  beta <- c(2^(-non_null_index/4 + 9/4), rep(0,(p_input-23)))
+  non_null_index <- c(1:5)
+  beta <- c(2^(-non_null_index/4 + 9/4), rep(0,(p_input-length(non_null_index))))
   return(beta)
 }
+
+true_beta <- beta_gen_ftn(p)
+
+# true_beta <- numeric(p)
+# non_null <- 5
+# index <- sample(1:p, non_null)
+# true_beta[index] <- 10
 
 # generate z & W
 data_gen_ftn <- function(N_input, p_input, Sigma_input){
@@ -23,136 +38,218 @@ data_gen_ftn <- function(N_input, p_input, Sigma_input){
   for(i in 1:N_input){
     w_i <- rmvnorm(1, rep(0,p_input), Sigma_input)
     mat[i,] <- w_i
-    z[i] <- rnorm(1, as.numeric(w_i %*% beta_gen_ftn(p_input)),4) # true sigma^2 = 4
+    z[i] <- rnorm(1, as.numeric(w_i %*% true_beta, 2)) # true sigma^2 = 4
   }
   
   return(list(W=mat,z=z))
   
 }
 
+## define W and z, using identity matrix
+Sigma <- matrix(0, p, p)
+for(i in 1:p){
+  for(j in 1:p){
+    Sigma[i,j] <- 0.9^(abs(i-j))
+  }
+}
+
+W <- data_gen_ftn(N, p, Sigma)$W
+z <- data_gen_ftn(N, p, Sigma)$z
+
 # eta update function- input: eta_j^t, output: eta_j^(t+1)
-eta_update_ftn <- function(eta_j_input,epsilon_input){
+eta_update_ftn <- function(eta_j_input,k_input){
+  f_x <- function(x_input){k_input*x_input + log(1+x_input)}
   
   a <- 1/5
-  b <- 10
+  b <- 10^4
+  c <- 10^5
   
-  target_density <- function(eta_j_input){(exp(-epsilon_input*eta_j_input)/(1+eta_j_input))}
-  f_x <- function(x_input){epsilon_input*x_input + log(1+x_input)}
+  A <- f_x(a)
+  B <- f_x(b)
+  C <- f_x(c)
+  
+  lambda2 <- (B-A)/(b-a)
+  lambda3 <- (C-B)/(c-b)
   
   
-  A <- f_x(a/epsilon_input)
-  I <- f_x(1/epsilon_input)
-  B <- f_x(b/epsilon_input)
-  
-  lambda_2 <- (I-A)/(1/epsilon_input-a/epsilon_input)
-  lambda_3 <- (B-I)/(b/epsilon_input-1/epsilon_input)
-  
-
-
-  
-  if(eta_j_input < a/epsilon_input){
-    case <- 1
-  }else if(eta_j_input >= a/epsilon_input & eta_j_input < 1/epsilon_input){
-    case <- 2
-  }else if(eta_j_input >= 1/epsilon_input & eta_j_input < b/epsilon_input){
-    case <- 3
-  }else{
-    case <- 4
+  f_L_x <- function(x_input, case_input){
+    
+    val <- switch(case_input,
+                  log(1+x_input),
+                  A + lambda2 * (x_input-a),
+                  B + lambda3 * (x_input-b),
+                  C + k_input * (x_input-c)
+    )
+    
+    return(val)
   }
   
- f_L_x <- function(x_input){
-   
-   value <-    switch (case,
-                       log(1+x_input),
-                       A + lambda_2*(x_input-a/epsilon_input),
-                       I + lambda_3*(x_input-b/epsilon_input),
-                       B + epsilon_input*(x_input-b/epsilon_input)
-                      )
-
-   return(value)
- }
+  # normalizing constants
   
- # normalizing constant
- nu_1 <- log(1+a/epsilon_input)
- nu_2 <- lambda_2^(-1) * exp(-A) * (1- exp(-I+A))
- nu_3 <- lambda_3^(-1) * exp(-I) *(1- exp(-B+I))
- nu_4 <- epsilon_input^(-1)*exp(-B)
+  v1 <- log(1+a)
+  v2 <- lambda2^(-1) * exp(-A) * (1-exp(-B+A))
+  v3 <- lambda3^(-1) * exp(-B) *(1-exp(-C+B))
+  v4 <- k_input^(-1) * exp(-C)
+  
+  v <- v1 + v2 + v3 + v4
+  
+  p1 <- v1/v
+  p2 <- v2/v
+  p3 <- v3/v
+  p4 <- v4/v
+  
+  # print(c(p1,p2,p3,p4))
 
- nu <- nu_1 + nu_2 + nu_3 + nu_4
- 
- w1 <- nu_1/nu
- w2 <- nu_2/nu
- w3 <- nu_3/nu
- w4 <- nu_4/nu
- 
- H2 <- 1-exp(-I+A)
- H3 <- 1-exp(-B+I)
- 
- u <- runif(1)
- eta_j_q <- switch(case,
-                   ((1+a/epsilon_input)^(u)-1) * w1,
-                   (a/epsilon_input + (-log(1-u*H2)/lambda_2)) * w2,
-                   (1/epsilon_input + (-log(1-u*H3)/lambda_3)) * w3,
-                   (b/epsilon_input + (-log(1-u)/epsilon_input)) * w4
-                   )
- eta_j_output <- ifelse(runif(1) < exp(-f_x(eta_j_q)+f_L_x(eta_j_q)), eta_j_q, eta_j_input)
- return(eta_j_output)
+  H2 <- 1-exp(-B+A)
+  H3 <- 1-exp(-C+B)
+  
+  u <- runif(1)
+  
+  case <- sample(c(1:4), 1, prob=c(p1,p2,p3,p4))
+  
+  eta_j_q <- switch(case,
+                    (1+a)^u -1,
+                    a - log(1-u*H2)/lambda2,
+                    b - log(1-u*H3)/lambda3,
+                    c - log(1-u)/k_input
+  )
+  u <- runif(1)
+  eta_j_output <- ifelse(u < exp(-f_x(eta_j_q)+f_L_x(eta_j_q, case)), eta_j_q, eta_j_input)
+  return(eta_j_output)
 
 }
 
-post_xi <- function(z_input, M_xi_input, w_input, N_input, xi_input){
-  det(M_xi_input)^(-1/2) * (w_input/2 + t(z) %*% solve(M_xi_input) %*% z)^(-(N_input + w_input)/2)/(sqrt(xi_input)*(1+xi_input))
+log_post_xi <- function(z_input, M_xi_input, omega_input, N_input, xi_input){
+  -log(det(M_xi_input))/2 - ((N_input + omega_input)/2) * log(omega_input/2 + t(z_input) %*% solve(M_xi_input) %*% z_input)-log(sqrt(xi_input)*(1+xi_input))
 }
+
+beta_update_ftn <- function(xi_input, eta_input, N_input, z_input, p_input, W_input, M_xi_inv_input, sigma2_input){
+  
+  u_vector <- t(rmvnorm(1, rep(0, p_input), diag(1/eta_input)/xi_input))
+  f_vector <- t(rmvnorm(1, rep(0, N_input), diag(N_input)))
+  v_vector <- W_input %*% u_vector + f_vector
+  v_star <- M_xi_inv_input %*% (z_input/sqrt(sigma2_input)-v_vector)
+  
+  beta_vector <- sqrt(sigma2_input) * (u_vector + (diag(1/eta_input) %*% t(W_input) %*% v_star) / xi_input)
+  
+  return(beta_vector)
+  
+}
+
+
 
 
 ########### ########### ###########
-iter <- 10^3
+iter <- 10^4 * 2
 
 # exact algorithm
 # parameters to be estimated: (eta(1~p), xi, sigma^2, beta(1~p))
 
 ########### save ###########
 eta_store <- beta_store <- matrix(0, iter, p)
-sigma2_store <- xi_store <- numeric(iter)
+sigma2_store <- xi_store <- xi_accept <- numeric(iter)
 
 ########### initial values ###########
 
 eta <- runif(p)
-beta <- runif(p)
+beta <- runif(p,0,4)
 sigma2 <- runif(1)
-xi <- runif(1)
+xi <- 200
 
 eta_store[1,] <- eta
 beta_store[1,] <- beta
 sigma2_store[1] <- sigma2
 xi_store[1] <- xi
 
-
+current_time <- Sys.time()
 for(i in 2:iter){
   
   # eta update
-  epsilon <- sapply(beta, function(x){(x^2 * xi) / (2 * sigma2)})
-  eta <- sapply(1:p, function(s){eta_update_ftn(eta[s], epsilon[s])})
+  k <- sapply(beta, function(x_input){(x_input^2 * xi) / (2 * sigma2)})
+  eta <- sapply(1:p, function(s_input){eta_update_ftn(eta[s_input], k[s_input])})
   
   
-  # M_xi
-  
+  # M_xi (needs to be updated after eta and xi updates)
+  M_xi <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi
   
   # xi update
-  log_xi_q <- rnorm(log(xi), 1)
-  xi_q <- exp(log_xi_q)
+  prop_var <- 10
+  xi_q <- rtruncnorm(1, a=0, b=Inf, mean=xi, sd=prop_var)
+  M_xi_q <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi_q
   
+  log_acc_prob <- log_post_xi(z, M_xi_q, omega, N, xi_q) + log(dtruncnorm(xi,a=0, b=Inf, mean=xi_q, sd=prop_var)) - log_post_xi(z, M_xi, omega, N, xi) - log(dtruncnorm(xi_q,a=0, b=Inf, mean=xi, sd=prop_var))
   
-  xi <- ifelse( runif(1) < post_xi()    )
+  if(log(runif(1)) < log_acc_prob){
+    xi <- xi_q
+    M_xi <- M_xi_q
+    xi_accept[i] <- 1
+  }
+  M_xi_inv <- solve(M_xi)
   
+  # sigma2 update
   
+  inv_sigma2 <- rgamma(1, shape= (omega + N)/2, rate = (omega + t(z) %*% M_xi_inv %*%z)/2)
+  sigma2 <- 1/inv_sigma2
   
+  # true sigma2
+  # sigma2 <- 4
+  
+  # beta update
+  # true beta
+  # beta <- true_beta + 0.0001
+  
+  beta <- beta_update_ftn(xi, eta, N, z, p, W, M_xi_inv, sigma2)
+  
+  xi_store[i] <- xi
+  sigma2_store[i] <- sigma2
+  beta_store[i,] <- beta
+  eta_store[i,] <- eta
+  
+  print(i)
+  # print(beta[1:5])
   
 }
 
+end_time <- Sys.time()
+end_time - current_time
+
+#save(sigma2_store, beta_store, file="parameters.rda")
+
+apply(beta_store,2,mean)[1:p]
+# plot(eta_store[,1],type="l")
+# plot(xi_store[1:2000], ylim=c(0,10^2))
+
+## example
+# neg_log_p_eta <- function(eta){
+#   k <- 16*4/(2*4)
+#   return(k*eta+log(1+eta))
+# }
+# plot(seq(0,10,0.1),neg_log_p_eta(seq(0,10,0.1)),type="l",xlim=c(0,1),ylim=c(0,20))
+plot(xi_store,type="l")
+# plot(eta_store[,1],type="l")
+# plot(eta_store[,2],type="l")
+# plot(eta_store[,3],type="l")
+# plot(eta_store[,10],type="l") # corresponding to null beta
+# range(eta_store[,1])
+# range(eta_store[,10])
+
+# plot(sigma2_store,type="l",ylim=c(0,10))
+mean(sigma2_store[10001:iter])
+
+apply(eta_store,2,mean) # true beta = 0 when p >5, eta[6:p] must be greater than eta[1:5] -> check
+mean(xi_store[10001:iter])
+plot(xi_store,type="l")
+plot(sigma2_store,type="l")
+mean(xi_accept)
+
+
+post <- apply(beta_store[5001:iter,],2,mean)
+plot(post,ylim=c(0,10))
+points(c(1:p),true_beta,col="red")
 
 
 
+plot(apply(eta_store[5001:iter,],2,mean))
+points(which(true_beta!=0),true_beta[true_beta!=0],col="red")
 
-
-
+# save(beta_store, sigma2_store,xi_store, eta_store, file="beta1.rda")
