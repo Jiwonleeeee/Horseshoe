@@ -28,13 +28,15 @@ beta_update_ftn <- function(xi_input, eta_input, N_input, z_input, p_input, W_in
 beta_matrix <- matrix(0, 10^4, p)
 for(i in 1:10^4){
   beta_matrix[i,] <- beta_update_ftn(true_xi, true_eta, N, z, p, W, solve(true_M_xi),true_sigma2)
+  print(i)
 }
 
 
 est_beta <- apply(beta_matrix,2,mean)
-plot(true_beta)
+plot(true_beta, main="beta update function check", ylab="beta")
 points(c(1:p),est_beta,col="red",pch=2,cex=0.3)
-
+legend(40, -3, legend=c("true", "estimate"),
+       col=c("black", "red"), pch=c(1,2), cex=0.8)
 # beta update function has no problem
 
 
