@@ -11,15 +11,15 @@ library(truncnorm)
 
 ########### ########### ###########
 N <- 100
-p <- 100
+p <- 200
 true_sigma2 <- 4
-omega <- 8/3 # noninformative?
+omega <- 0.001 # noninformative?
 
 ########### data ###########
 # true beta
 beta_gen_ftn <- function(p_input){
   non_null_index <- c(1:23)
-  beta <- c(2^(-non_null_index/4 + 9/4), rep(0,(p_input-length(non_null_index))))
+  beta <- c(2^(-non_null_index/4 + 9/4)*2, rep(0,(p_input-length(non_null_index))))
   return(beta)
 }
 
@@ -37,7 +37,7 @@ data_gen_ftn <- function(N_input, p_input, Sigma_input){
   for(i in 1:N_input){
     w_i <- rmvnorm(1, rep(0,p_input), Sigma_input)
     mat[i,] <- w_i
-    z[i] <- rnorm(1, as.numeric(w_i %*% true_beta, 2)) # true sigma^2 = 4
+    z[i] <- rnorm(1, as.numeric(w_i %*% true_beta),2) # true sigma^2 = 4
   }
   
   return(list(W=mat,z=z))
@@ -119,7 +119,7 @@ eta_update_ftn <- function(eta_j_input,k_input){
 }
 
 log_post_xi <- function(z_input, M_xi_input, omega_input, N_input, xi_input){
-  -determinant(M_xi_input, logarithm = T)$mod/2 - ((N_input + omega_input)/2) * log(omega_input/2 + t(z_input) %*% solve(M_xi_input) %*% z_input)-log(sqrt(xi_input)*(1+xi_input))
+  as.numeric(determinant(solve(M_xi_input), logarithm = T)$mod)/2 - ((N_input + omega_input)/2) * log(omega_input/2 + (t(z_input) %*% solve(M_xi_input) %*% z_input)/2)-log(sqrt(xi_input)*(1+xi_input))
 }
 
 beta_update_ftn <- function(xi_input, eta_input, N_input, z_input, p_input, W_input, M_xi_inv_input, sigma2_input){
@@ -172,11 +172,13 @@ for(i in 2:iter){
   M_xi <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi
   
   # xi update
-  prop_var <- 1 # sd
-  
+
+  # truncated version
   # xi_q <- rtruncnorm(1, a=0, b=Inf, mean=xi, sd=prop_var)
   # M_xi_q <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi_q
   
+  # log version
+  prop_var <- 5 # sd
   log.xi_q <- rnorm(1, log(xi), prop_var)
   xi_q <- exp(log.xi_q)
   M_xi_q <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi_q
@@ -193,7 +195,7 @@ for(i in 2:iter){
   
   # sigma2 update
   
-  sigma2 <- rinvgamma(1, shape= (omega + N)/2, rate = (omega + t(z) %*% M_xi_inv %*%z)/2)
+  sigma2 <- 1/rgamma(1, shape= (omega + N)/2, rate = 2/(omega + t(z) %*% M_xi_inv %*%z))
 
   
   # true sigma2
@@ -231,6 +233,7 @@ apply(beta_store,2,mean)[1:p]
 # }
 # plot(seq(0,10,0.1),neg_log_p_eta(seq(0,10,0.1)),type="l",xlim=c(0,1),ylim=c(0,20))
 plot(xi_store,type="l")
+plot(sigma2_store,type="l")
 # plot(eta_store[,1],type="l")
 # plot(eta_store[,2],type="l")
 # plot(eta_store[,3],type="l")
@@ -257,4 +260,4 @@ points(c(1:p),true_beta,col="red")
 plot(apply(eta_store[5001:iter,],2,mean))
 points(which(true_beta!=0),true_beta[true_beta!=0],col="red")
 
-save(beta_store, sigma2_store,xi_store, eta_store, file="beta1.rda")
+# save(beta_store, sigma2_store,xi_store, eta_store, file="beta1.rda")
