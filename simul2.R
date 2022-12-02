@@ -139,7 +139,7 @@ beta_update_ftn <- function(xi_input, eta_input, N_input, z_input, p_input, W_in
 
 
 ########### ########### ###########
-iter <- 10^4
+iter <- 10^4 * 5
 
 # exact algorithm
 # parameters to be estimated: (eta(1~p), xi, sigma^2, beta(1~p))
@@ -178,12 +178,12 @@ for(i in 2:iter){
   # M_xi_q <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi_q
   
   # log version
-  prop_var <- 5 # sd
+  prop_var <- 1 # sd
   log.xi_q <- rnorm(1, log(xi), prop_var)
   xi_q <- exp(log.xi_q)
   M_xi_q <- diag(N) + ( W %*% diag(1/eta) %*% t(W) ) / xi_q
   
-  #log_acc_prob <- log_post_xi(z, M_xi_q, omega, N, xi_q) + dtruncnorm(xi,0,Inf,xi_q,prop_var) - log_post_xi(z, M_xi, omega, N, xi) - dtruncnorm(xi_q,0,Inf,xi,prop_var)
+  #log_acc_prob <- log_post_xi(z, M_xi_q, omega, N, xi_q) + log(dtruncnorm(xi,0,Inf,xi_q,prop_var)) - log_post_xi(z, M_xi, omega, N, xi) - log(dtruncnorm(xi_q,0,Inf,xi,prop_var))
   log_acc_prob <- log_post_xi(z, M_xi_q, omega, N, xi_q) + log(xi_q) - log_post_xi(z, M_xi, omega, N, xi) - log(xi)
   
   if(log(runif(1)) < log_acc_prob){
@@ -195,7 +195,7 @@ for(i in 2:iter){
   
   # sigma2 update
   
-  sigma2 <- 1/rgamma(1, shape= (omega + N)/2, rate = 2/(omega + t(z) %*% M_xi_inv %*%z))
+  sigma2 <- 1/rgamma(1, shape= (omega + N)/2, rate = (omega + t(z) %*% M_xi_inv %*%z)/2)
 
   
   # true sigma2
@@ -260,4 +260,6 @@ points(c(1:p),true_beta,col="red")
 plot(apply(eta_store[5001:iter,],2,mean))
 points(which(true_beta!=0),true_beta[true_beta!=0],col="red")
 
+# contradiction: acceptance prob is still too high (0.8) but if it is increasing, the scale of xi gets too large
+plot(xi_store, type="l", ylim=c(0,10^10))
 # save(beta_store, sigma2_store,xi_store, eta_store, file="beta1.rda")
